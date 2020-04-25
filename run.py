@@ -60,7 +60,6 @@ def train(args, weights_matrix):
     model = bilstm_crf.BiLSTMCRF(weights_matrix, sent_vocab, tag_vocab, float(args['--dropout-rate']), int(args['--embed-size']),
                                  int(args['--hidden-size'])).to(device)
     print(model)
-    s
     # for name, param in model.named_parameters():
     #     if 'weight' in name:
     #         nn.init.normal_(param.data, 0, 0.01)
@@ -124,7 +123,6 @@ def train(args, weights_matrix):
                     b = new_weights_matrix.tolist()
                     file_path = "./data/weights_matrix.json"
                     json.dump(b, codecs.open(file_path, 'w', encoding='utf-8'), separators=(',', ':'), sort_keys=True, indent=4)
-                    print(new_weights_matrix)
                 else:
                     patience += 1
                     if patience == int(args['--max-patience']):
@@ -156,8 +154,11 @@ def test(args, weights_matrix):
     sentences, tags = utils.read_corpus(args['TEST'])
     sentences = utils.words2indices(sentences, sent_vocab)
 
+    # Convert to binary tags (if there is a tag or not)
+    tags = entity_or_not(tags)
+
     # Convert from IOBES to IOB
-    tags = iobes_iob(tags)
+    # tags = iobes_iob(tags)
 
     tags = utils.words2indices(tags, tag_vocab)
     test_data = list(zip(sentences, tags))
@@ -260,7 +261,7 @@ def cal_statistics(tag, predicted_tag, tag_vocab):
     fp += f
     return tp, fp, fn
 
-def preprocess_data(args, parameter='TRAIN'):
+def preprocess_data(args, parameter='TRAIN', task1=True):
     """
     Load sentences. A line must contain at least a word and its tag.
     Sentences are separated by empty lines.
@@ -284,6 +285,20 @@ def preprocess_data(args, parameter='TRAIN'):
 
     tags = ['<START>',  '<END>', '<PAD>', '-DOCSTART-']
     words = ['<START>',  '<END>', '<PAD>', '-DOCSTART-']
+
+    # # Run this only if only for task 1
+    # if task1:
+    #     # Write the data into a file
+    #     with codecs.open('./data/MTL_task.txt', 'w', 'utf8') as f:
+    #         for sentence in sentences:
+    #             for sent in sentence:
+    #                 if sent[1] == 'O':
+    #                     f.write(sent[0] + "	" + "O")
+    #                 else:
+    #                     f.write(sent[0] + "	" + "Y")
+    #                 f.write("\n")
+    #             f.write("\n")
+
     for sentence in sentences:
         for sent in sentence:
             words.append(sent[0])
@@ -367,6 +382,27 @@ def iobes_iob(tags):
         new_tags.append(temp_tags)
     return new_tags
 
+def entity_or_not(tags):
+    new_tags = []
+    for curr_set in tags:
+        temp_tags = []
+        for j, tag in enumerate(curr_set):
+            if tag == 'O':
+                temp_tags.append("O")
+            elif tag == '<START>':
+                temp_tags.append(tag)
+            elif tag == '<END>':
+                temp_tags.append(tag)
+            elif tag == '<PAD>':
+                temp_tags.append(tag)
+            elif tag == '-DOCSTART-':
+                temp_tags.append(tag)
+            else:
+                temp_tags.append("Y")
+                # raise Exception('Invalid format!')
+        new_tags.append(temp_tags)
+    return new_tags
+
 def main():
     args = docopt(__doc__)
     random.seed(0)
@@ -374,7 +410,7 @@ def main():
     if args['--cuda']:
         torch.cuda.manual_seed(0)
     if args['train']:
-        unique_tags, unique_words = preprocess_data(args)
+        unique_tags, unique_words = preprocess_data(args, 'TRAIN', True)
         unique_words_dict = create_vocab(unique_tags, unique_words)
         print("Done preprocessing the data")
         weights_matrix = pretrained(unique_words_dict)
