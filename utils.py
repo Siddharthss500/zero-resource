@@ -1,105 +1,129 @@
-import io
-
-def iob2(tags):
-    """
-    Check that tags have a valid IOB format.
-    Tags in IOB1 format are converted to IOB2.
-    """
-    for i, tag in enumerate(tags):
-        if tag == 'O':
-            continue
-        split = tag.split('-')
-        if len(split) != 2 or split[0] not in ['I', 'B']:
-            return False
-        if split[0] == 'B':
-            continue
-        elif i == 0 or tags[i - 1] == 'O':  # conversion IOB1 to IOB2
-            tags[i] = 'B' + tag[1:]
-        elif tags[i - 1][1:] == tag[1:]:
-            continue
-        else:  # conversion IOB1 to IOB2
-            tags[i] = 'B' + tag[1:]
-    return True
+import random
+import torch
 
 
-def iob_iobes(tags):
+def read_corpus(filepath):
+    """ Read corpus from the given file path.
+    Args:
+        filepath: file path of the corpus
+    Returns:
+        sentences: a list of sentences, each sentence is a list of str
+        tags: corresponding tags
     """
-    IOB -> IOBES
-    """
-    new_tags = []
-    for i, tag in enumerate(tags):
-        if tag == 'O':
-            new_tags.append(tag)
-        elif tag.split('-')[0] == 'B':
-            if i + 1 != len(tags) and \
-               tags[i + 1].split('-')[0] == 'I':
-                new_tags.append(tag)
+    sentences, tags = [], []
+    sent, tag = ['<START>'], ['<START>']
+    with open(filepath, 'r', encoding='utf8') as f:
+        for line in f:
+            if line == '\n':
+                if len(sent) > 1:
+                    sentences.append(sent + ['<END>'])
+                    tags.append(tag + ['<END>'])
+                sent, tag = ['<START>'], ['<START>']
             else:
-                new_tags.append(tag.replace('B-', 'S-'))
-        elif tag.split('-')[0] == 'I':
-            if i + 1 < len(tags) and \
-                    tags[i + 1].split('-')[0] == 'I':
-                new_tags.append(tag)
-            else:
-                new_tags.append(tag.replace('I-', 'E-'))
-        else:
-            raise Exception('Invalid IOB format!')
-    return new_tags
+                line = line.split()
+                sent.append(line[0])
+                tag.append(line[1])
+    return sentences, tags
 
 
-def iobes_iob(tags):
+def generate_train_dev_dataset(filepath, sent_vocab, tag_vocab, train_proportion=0.8):
+    """ Read corpus from given file path and split it into train and dev parts
+    Args:
+        filepath: file path
+        sent_vocab: sentence vocab
+        tag_vocab: tag vocab
+        train_proportion: proportion of training data
+    Returns:
+        train_data: data for training, list of tuples, each containing a sentence and corresponding tag.
+        dev_data: data for development, list of tuples, each containing a sentence and corresponding tag.
     """
-    IOBES -> IOB
-    """
-    new_tags = []
-    for i, tag in enumerate(tags):
-        if tag.split('-')[0] == 'B':
-            new_tags.append(tag)
-        elif tag.split('-')[0] == 'I':
-            new_tags.append(tag)
-        elif tag.split('-')[0] == 'S':
-            new_tags.append(tag.replace('S-', 'B-'))
-        elif tag.split('-')[0] == 'E':
-            new_tags.append(tag.replace('E-', 'I-'))
-        elif tag.split('-')[0] == 'O':
-            new_tags.append(tag)
-        else:
-            raise Exception('Invalid format!')
-    return new_tags
-
-def create_dico(item_list):
-    """
-    Create a dictionary of items from a list of list of items.
-    """
-    assert type(item_list) is list
-    dico = {}
-    for items in item_list:
-        for item in items:
-            if item not in dico:
-                dico[item] = 1
-            else:
-                dico[item] += 1
-    return dico
+    sentences, tags = read_corpus(filepath)
+    sentences = words2indices(sentences, sent_vocab)
+    tags = words2indices(tags, tag_vocab)
+    data = list(zip(sentences, tags))
+    random.shuffle(data)
+    n_train = int(len(data) * train_proportion)
+    train_data, dev_data = data[: n_train], data[n_train:]
+    return train_data, dev_data
 
 
-def create_mapping(dico):
+def batch_iter(data, batch_size=32, shuffle=True):
+    """ Yield batch of (sent, tag), by the reversed order of source length.
+    Args:
+        data: list of tuples, each tuple contains a sentence and corresponding tag.
+        batch_size: batch size
+        shuffle: bool value, whether to random shuffle the data
     """
-    Create a mapping (item to ID / ID to item) from a dictionary.
-    Items are ordered by decreasing frequency.
-    """
-    sorted_items = sorted(dico.items(), key=lambda x: (-x[1], x[0]))
-    id_to_item = {i: v[0] for i, v in enumerate(sorted_items)}
-    item_to_id = {v: k for k, v in id_to_item.items()}
-    return item_to_id, id_to_item
+    data_size = len(data)
+    indices = list(range(data_size))
+    if shuffle:
+        random.shuffle(indices)
+    batch_num = (data_size + batch_size - 1) // batch_size
+    for i in range(batch_num):
+        batch = [data[idx] for idx in indices[i * batch_size: (i + 1) * batch_size]]
+        batch = sorted(batch, key=lambda x: len(x[0]), reverse=True)
+        sentences = [x[0] for x in batch]
+        tags = [x[1] for x in batch]
+        yield sentences, tags
 
-def load_vectors(fname):
+
+def words2indices(origin, vocab):
+    """ Transform a sentence or a list of sentences from str to int
+    Args:
+        origin: a sentence of type list[str], or a list of sentences of type list[list[str]]
+        vocab: Vocab instance
+    Returns:
+        a sentence or a list of sentences represented with int
     """
-    Load the pretrained word-embeddings from FastText
+    if isinstance(origin[0], list):
+        result = [[vocab[w] for w in sent] for sent in origin]
+    else:
+        result = [vocab[w] for w in origin]
+    return result
+
+
+def indices2words(origin, vocab):
+    """ Transform a sentence or a list of sentences from int to str
+    Args:
+        origin: a sentence of type list[int], or a list of sentences of type list[list[int]]
+        vocab: Vocab instance
+    Returns:
+        a sentence or a list of sentences represented with str
     """
-    fin = io.open(fname, 'r', encoding='utf-8', newline='\n', errors='ignore')
-    n, d = map(int, fin.readline().split())
-    data = {}
-    for line in fin:
-        tokens = line.rstrip().split(' ')
-        data[tokens[0]] = map(float, tokens[1:])
-    return data
+    if isinstance(origin[0], list):
+        result = [[vocab.id2word(w) for w in sent] for sent in origin]
+    else:
+        result = [vocab.id2word(w) for w in origin]
+    return result
+
+
+def pad(data, padded_token, device):
+    """ pad data so that each sentence has the same length as the longest sentence
+    Args:
+        data: list of sentences, List[List[word]]
+        padded_token: padded token
+        device: device to store data
+    Returns:
+        padded_data: padded data, a tensor of shape (max_len, b)
+        lengths: lengths of batches, a list of length b.
+    """
+    lengths = [len(sent) for sent in data]
+    max_len = lengths[0]
+    padded_data = []
+    for s in data:
+        padded_data.append(s + [padded_token] * (max_len - len(s)))
+    return torch.tensor(padded_data, device=device), lengths
+
+
+def print_var(**kwargs):
+    for k, v in kwargs.items():
+        print(k, v)
+
+
+def main():
+    sentences, tags = read_corpus('data/train.txt')
+    print(len(sentences), len(tags))
+
+
+if __name__ == '__main__':
+    main()
