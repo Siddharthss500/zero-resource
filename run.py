@@ -1,7 +1,7 @@
 """
 Usage:
-    run.py train TRAIN SENT_VOCAB TAG_VOCAB [options]
-    run.py test TEST SENT_VOCAB TAG_VOCAB MODEL [options]
+    run.py train TRAIN SENT_VOCAB TAG_VOCAB_NER TAG_VOCAB_ENTITY [options]
+    run.py test TEST SENT_VOCAB TAG_VOCAB_NER TAG_VOCAB_ENTITY MODEL [options]
 
 Options:
     --dropout-rate=<float>              dropout rate [default: 0.5]
@@ -43,8 +43,9 @@ def train(args, weights_matrix):
         args: dict that contains options in command
     """
     sent_vocab = Vocab.load(args['SENT_VOCAB'])
-    tag_vocab = Vocab.load(args['TAG_VOCAB'])
-    train_data, dev_data = utils.generate_train_dev_dataset(args['TRAIN'], sent_vocab, tag_vocab)
+    tag_vocab_ner = Vocab.load(args['TAG_VOCAB_NER'])
+    tag_vocab_entity = Vocab.load(args['TAG_VOCAB_ENTITY'])
+    train_data, dev_data = utils.generate_train_dev_dataset(args['TRAIN'], sent_vocab, tag_vocab_ner, tag_vocab_entity)
     print('num of training examples: %d' % (len(train_data)))
     print('num of development examples: %d' % (len(dev_data)))
 
@@ -57,7 +58,7 @@ def train(args, weights_matrix):
     device = torch.device('cuda' if args['--cuda'] else 'cpu')
     patience, decay_num = 0, 0
 
-    model = bilstm_crf.BiLSTMCRF(weights_matrix, sent_vocab, tag_vocab, float(args['--dropout-rate']), int(args['--embed-size']),
+    model = bilstm_crf.BiLSTMCRF(weights_matrix, sent_vocab, tag_vocab_ner, tag_vocab_entity, float(args['--dropout-rate']), int(args['--embed-size']),
                                  int(args['--hidden-size'])).to(device)
     print(model)
     # for name, param in model.named_parameters():
@@ -74,15 +75,16 @@ def train(args, weights_matrix):
 
     print('start training...')
     for epoch in range(max_epoch):
-        for sentences, tags in utils.batch_iter(train_data, batch_size=int(args['--batch-size'])):
+        for sentences, tags_ner, tags_entity in utils.batch_iter(train_data, batch_size=int(args['--batch-size'])):
             train_iter += 1
             current_batch_size = len(sentences)
             sentences, sent_lengths = utils.pad(sentences, sent_vocab[sent_vocab.PAD], device)
-            tags, _ = utils.pad(tags, tag_vocab[tag_vocab.PAD], device)
+            tags_ner, _ = utils.pad(tags_ner, tag_vocab_ner[tag_vocab_ner.PAD], device)
+            tags_entity, _ = utils.pad(tags_entity, tag_vocab_entity[tag_vocab_entity.PAD], device)
 
             # back propagation
             optimizer.zero_grad()
-            batch_loss = model(sentences, tags, sent_lengths)  # shape: (b,)
+            batch_loss = model(sentences, tags_ner, tags_entity, sent_lengths)  # shape: (b,)
             loss = batch_loss.mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(args['--clip_max_norm']))
@@ -109,7 +111,7 @@ def train(args, weights_matrix):
                        cum_loss_sum / cum_batch_size, time.time() - cum_start))
                 cum_loss_sum, cum_batch_size, cum_tgt_word_sum = 0, 0, 0
 
-                dev_loss = cal_dev_loss(model, dev_data, 64, sent_vocab, tag_vocab, device)
+                dev_loss = cal_dev_loss(model, dev_data, 64, sent_vocab, tag_vocab_ner, tag_vocab_entity, device)
                 if dev_loss < min_dev_loss * float(args['--patience-threshold']):
                     min_dev_loss = dev_loss
                     model.save(model_save_path)
@@ -150,18 +152,18 @@ def test(args, weights_matrix):
         args: dict that contains options in command
     """
     sent_vocab = Vocab.load(args['SENT_VOCAB'])
-    tag_vocab = Vocab.load(args['TAG_VOCAB'])
+    tag_vocab = Vocab.load(args['TAG_VOCAB_NER'])
     sentences, tags = utils.read_corpus(args['TEST'])
     sentences = utils.words2indices(sentences, sent_vocab)
 
-    # Convert to binary tags (if there is a tag or not)
-    tags = entity_or_not(tags)
+    # # Convert to binary tags (if there is a tag or not)
+    tags_entity = utils.entity_or_not(tags)
 
     # Convert from IOBES to IOB
-    # tags = iobes_iob(tags)
+    tags = iobes_iob(tags)
 
     tags = utils.words2indices(tags, tag_vocab)
-    test_data = list(zip(sentences, tags))
+    test_data = list(zip(sentences, tags, tags_entity))
     print('num of test samples: %d' % (len(test_data)))
 
     device = torch.device('cuda' if args['--cuda'] else 'cpu')
@@ -175,7 +177,7 @@ def test(args, weights_matrix):
 
     model.eval()
     with torch.no_grad():
-        for sentences, tags in utils.batch_iter(test_data, batch_size=int(args['--batch-size']), shuffle=False):
+        for sentences, tags, tags_entity in utils.batch_iter(test_data, batch_size=int(args['--batch-size']), shuffle=False):
             sentences, sent_lengths = utils.pad(sentences, sent_vocab[sent_vocab.PAD], device)
             predicted_tags = model.predict(sentences, sent_lengths)
             n_iter += 1
@@ -198,7 +200,7 @@ def test(args, weights_matrix):
     print('Precision: %f, Recall: %f, F1 score: %f' % (precision, recall, f1_score))
 
 
-def cal_dev_loss(model, dev_data, batch_size, sent_vocab, tag_vocab, device):
+def cal_dev_loss(model, dev_data, batch_size, sent_vocab, tag_vocab_ner, tag_vocab_entity, device):
     """ Calculate loss on the development data
     Args:
         model: the model being trained
@@ -214,10 +216,11 @@ def cal_dev_loss(model, dev_data, batch_size, sent_vocab, tag_vocab, device):
     model.eval()
     loss, n_sentences = 0, 0
     with torch.no_grad():
-        for sentences, tags in utils.batch_iter(dev_data, batch_size, shuffle=False):
+        for sentences, tags_ner, tags_entity in utils.batch_iter(dev_data, batch_size, shuffle=False):
             sentences, sent_lengths = utils.pad(sentences, sent_vocab[sent_vocab.PAD], device)
-            tags, _ = utils.pad(tags, tag_vocab[sent_vocab.PAD], device)
-            batch_loss = model(sentences, tags, sent_lengths)  # shape: (b,)
+            tags_ner, _ = utils.pad(tags_ner, tag_vocab_ner[sent_vocab.PAD], device)
+            tags_entity, _ = utils.pad(tags_entity, tag_vocab_entity[sent_vocab.PAD], device)
+            batch_loss = model(sentences, tags_ner, tags_entity, sent_lengths)  # shape: (b,)
             loss += batch_loss.sum().item()
             n_sentences += len(sentences)
     model.train(is_training)
@@ -261,7 +264,7 @@ def cal_statistics(tag, predicted_tag, tag_vocab):
     fp += f
     return tp, fp, fn
 
-def preprocess_data(args, parameter='TRAIN', task1=True):
+def preprocess_data(args, parameter='TRAIN'):
     """
     Load sentences. A line must contain at least a word and its tag.
     Sentences are separated by empty lines.
@@ -283,37 +286,36 @@ def preprocess_data(args, parameter='TRAIN', task1=True):
         if 'DOCSTART' not in sentence[0][0]:
             sentences.append(sentence)
 
-    tags = ['<START>',  '<END>', '<PAD>', '-DOCSTART-']
+    tags_ner = ['<START>',  '<END>', '<PAD>', '-DOCSTART-']
+    tags_entity = ['<START>',  '<END>', '<PAD>', '-DOCSTART-']
     words = ['<START>',  '<END>', '<PAD>', '-DOCSTART-']
-
-    # # Run this only if only for task 1
-    # if task1:
-    #     # Write the data into a file
-    #     with codecs.open('./data/MTL_task.txt', 'w', 'utf8') as f:
-    #         for sentence in sentences:
-    #             for sent in sentence:
-    #                 if sent[1] == 'O':
-    #                     f.write(sent[0] + "	" + "O")
-    #                 else:
-    #                     f.write(sent[0] + "	" + "Y")
-    #                 f.write("\n")
-    #             f.write("\n")
 
     for sentence in sentences:
         for sent in sentence:
             words.append(sent[0])
-            tags.append(sent[1])
-    unique_tags = list(Counter(tags).keys())
+            tags_ner.append(sent[1])
+            if sent[1] == 'O':
+                tags_entity.append('O')
+            else:
+                tags_entity.append('Y')
+    unique_tags_ner = list(Counter(tags_ner).keys())
+    unique_tags_entity = list(Counter(tags_entity).keys())
     unique_words = list(Counter(words).keys())
 
-    return unique_tags, unique_words
+    return unique_tags_ner, unique_tags_entity, unique_words
 
-def create_vocab(unique_tags, unique_words):
-    # For tags
-    unique_tags_dict = {unique_tags[i]: i for i in range(len(unique_tags))}
-    tag_vocab = {"word2id": unique_tags_dict, "id2word": unique_tags}
+def create_vocab(unique_tags_ner, unique_tags_entity, unique_words):
+    # For tags NER
+    unique_tags_dict = {unique_tags_ner[i]: i for i in range(len(unique_tags_ner))}
+    tag_vocab = {"word2id": unique_tags_dict, "id2word": unique_tags_ner}
     json_object = json.dumps(tag_vocab)
-    with open("./vocab/tag_vocab.json", "w") as outfile:
+    with open("./vocab/tag_vocab_ner.json", "w") as outfile:
+        outfile.write(json_object)
+    # For tags entity
+    unique_tags_dict = {unique_tags_entity[i]: i for i in range(len(unique_tags_entity))}
+    tag_vocab = {"word2id": unique_tags_dict, "id2word": unique_tags_entity}
+    json_object = json.dumps(tag_vocab)
+    with open("./vocab/tag_vocab_entity.json", "w") as outfile:
         outfile.write(json_object)
     # For words
     unique_words_dict = {unique_words[i]: i for i in range(len(unique_words))}
@@ -382,27 +384,6 @@ def iobes_iob(tags):
         new_tags.append(temp_tags)
     return new_tags
 
-def entity_or_not(tags):
-    new_tags = []
-    for curr_set in tags:
-        temp_tags = []
-        for j, tag in enumerate(curr_set):
-            if tag == 'O':
-                temp_tags.append("O")
-            elif tag == '<START>':
-                temp_tags.append(tag)
-            elif tag == '<END>':
-                temp_tags.append(tag)
-            elif tag == '<PAD>':
-                temp_tags.append(tag)
-            elif tag == '-DOCSTART-':
-                temp_tags.append(tag)
-            else:
-                temp_tags.append("Y")
-                # raise Exception('Invalid format!')
-        new_tags.append(temp_tags)
-    return new_tags
-
 def main():
     args = docopt(__doc__)
     random.seed(0)
@@ -410,8 +391,8 @@ def main():
     if args['--cuda']:
         torch.cuda.manual_seed(0)
     if args['train']:
-        unique_tags, unique_words = preprocess_data(args, 'TRAIN', True)
-        unique_words_dict = create_vocab(unique_tags, unique_words)
+        unique_tags_ner, unique_tags_entity, unique_words = preprocess_data(args, 'TRAIN')
+        unique_words_dict = create_vocab(unique_tags_ner, unique_tags_entity, unique_words)
         print("Done preprocessing the data")
         weights_matrix = pretrained(unique_words_dict)
         print("Done computing the weights matrix")
@@ -424,7 +405,7 @@ def main():
         weights_matrix = np.array(b_new)
 
         # Get the unique words and unique tags from the test file
-        unique_tags, unique_words = preprocess_data(args, 'TEST')
+        unique_tags_ner, unique_tags_entity, unique_words = preprocess_data(args, 'TEST')
         # Add the unique words from the test data (not present in train data) to the dictionary
         # Load the train vocab
         with open('./vocab/sent_vocab.json') as json_file:

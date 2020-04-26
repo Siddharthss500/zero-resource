@@ -7,7 +7,7 @@ import utils
 import numpy as np
 
 class BiLSTMCRF(nn.Module):
-    def __init__(self, weights_matrix, sent_vocab, tag_vocab, dropout_rate=0.5, embed_size=300, hidden_size=256):
+    def __init__(self, weights_matrix, sent_vocab, tag_vocab_ner, tag_vocab_entity, dropout_rate=0.5, embed_size=300, hidden_size=256):
         """ Initialize the model
         Args:
             sent_vocab (Vocab): vocabulary of words
@@ -20,18 +20,23 @@ class BiLSTMCRF(nn.Module):
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.sent_vocab = sent_vocab
-        self.tag_vocab = tag_vocab
+        self.tag_vocab_entity = tag_vocab_entity
+        self.tag_vocab_ner = tag_vocab_ner
         # self.embedding = nn.Embedding(len(sent_vocab), embed_size)
 
         # freeze=True is default. Change it to false to learn embeddings during training
-        self.embedding = nn.Embedding.from_pretrained(torch.FloatTensor(weights_matrix), freeze=True)
+        self.embedding = nn.Embedding.from_pretrained(torch.FloatTensor(weights_matrix), freeze=False)
 
         self.dropout = nn.Dropout(dropout_rate)
         self.encoder = nn.LSTM(input_size=embed_size, hidden_size=hidden_size, bidirectional=True)
-        self.hidden2emit_score = nn.Linear(hidden_size * 2, len(self.tag_vocab))
-        self.transition = nn.Parameter(torch.randn(len(self.tag_vocab), len(self.tag_vocab)))  # shape: (K, K)
 
-    def forward(self, sentences, tags, sen_lengths):
+        self.hidden2emit_score_ner = nn.Linear(hidden_size * 2, len(self.tag_vocab_ner))
+        self.hidden2emit_score_entity = nn.Linear(hidden_size * 2, len(self.tag_vocab_entity))
+
+        self.transition_ner = nn.Parameter(torch.randn(len(self.tag_vocab_ner), len(self.tag_vocab_ner)))  # shape: (K, K)
+        self.transition_entity = nn.Parameter(torch.randn(len(self.tag_vocab_entity), len(self.tag_vocab_entity)))  # shape: (K, K)
+
+    def forward(self, sentences, tags_ner, tags_entity, sen_lengths):
         """
         Args:
             sentences (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
@@ -44,11 +49,16 @@ class BiLSTMCRF(nn.Module):
         mask = (sentences != self.sent_vocab[self.sent_vocab.PAD]).to(self.device)  # shape: (b, len)
         sentences = sentences.transpose(0, 1)  # shape: (len, b)
         sentences = self.embedding(sentences)  # shape: (len, b, e)
-        emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
-        loss = self.cal_loss(tags, mask, emit_score)  # shape: (b,)
+
+        emit_score_ner = self.encode(sentences, sen_lengths, self.hidden2emit_score_ner)  # shape: (b, len, K)
+        loss_ner = self.cal_loss(tags_ner, mask, emit_score_ner, self.transition_ner)  # shape: (b,)
+
+        emit_score_entity = self.encode(sentences, sen_lengths, self.hidden2emit_score_entity)  # shape: (b, len, K)
+        loss_entity = self.cal_loss(tags_entity, mask, emit_score_entity, self.transition_entity)  # shape: (b,)
+        loss = loss_ner+loss_entity
         return loss
 
-    def encode(self, sentences, sent_lengths):
+    def encode(self, sentences, sent_lengths, hidden2emit_score):
         """ BiLSTM Encoder
         Args:
             sentences (tensor): sentences with word embeddings, shape (len, b, e)
@@ -59,11 +69,11 @@ class BiLSTMCRF(nn.Module):
         padded_sentences = pack_padded_sequence(sentences, sent_lengths)
         hidden_states, _ = self.encoder(padded_sentences)
         hidden_states, _ = pad_packed_sequence(hidden_states, batch_first=True)  # shape: (b, len, 2h)
-        emit_score = self.hidden2emit_score(hidden_states)  # shape: (b, len, K)
+        emit_score = hidden2emit_score(hidden_states)  # shape: (b, len, K)
         emit_score = self.dropout(emit_score)  # shape: (b, len, K)
         return emit_score
 
-    def cal_loss(self, tags, mask, emit_score):
+    def cal_loss(self, tags, mask, emit_score, transition):
         """ Calculate CRF loss
         Args:
             tags (tensor): a batch of tags, shape (b, len)
@@ -75,14 +85,14 @@ class BiLSTMCRF(nn.Module):
         batch_size, sent_len = tags.shape
         # calculate score for the tags
         score = torch.gather(emit_score, dim=2, index=tags.unsqueeze(dim=2)).squeeze(dim=2)  # shape: (b, len)
-        score[:, 1:] += self.transition[tags[:, :-1], tags[:, 1:]]
+        score[:, 1:] += transition[tags[:, :-1], tags[:, 1:]]
         total_score = (score * mask.type(torch.float)).sum(dim=1)  # shape: (b,)
         # calculate the scaling factor
         d = torch.unsqueeze(emit_score[:, 0], dim=1)  # shape: (b, 1, K)
         for i in range(1, sent_len):
             n_unfinished = mask[:, i].sum()
             d_uf = d[: n_unfinished]  # shape: (uf, 1, K)
-            emit_and_transition = emit_score[: n_unfinished, i].unsqueeze(dim=1) + self.transition  # shape: (uf, K, K)
+            emit_and_transition = emit_score[: n_unfinished, i].unsqueeze(dim=1) + transition  # shape: (uf, K, K)
             log_sum = d_uf.transpose(1, 2) + emit_and_transition  # shape: (uf, K, K)
             max_v = log_sum.max(dim=1)[0].unsqueeze(dim=1)  # shape: (uf, 1, K)
             log_sum = log_sum - max_v  # shape: (uf, K, K)
@@ -108,13 +118,13 @@ class BiLSTMCRF(nn.Module):
         mask = (sentences != self.sent_vocab[self.sent_vocab.PAD])  # shape: (b, len)
         sentences = sentences.transpose(0, 1)  # shape: (len, b)
         sentences = self.embedding(sentences)  # shape: (len, b, e)
-        emit_score = self.encode(sentences, sen_lengths)  # shape: (b, len, K)
-        tags = [[[i] for i in range(len(self.tag_vocab))]] * batch_size  # list, shape: (b, K, 1)
+        emit_score = self.encode(sentences, sen_lengths, self.hidden2emit_score_ner)  # shape: (b, len, K)
+        tags = [[[i] for i in range(len(self.tag_vocab_ner))]] * batch_size  # list, shape: (b, K, 1)
         d = torch.unsqueeze(emit_score[:, 0], dim=1)  # shape: (b, 1, K)
         for i in range(1, sen_lengths[0]):
             n_unfinished = mask[:, i].sum()
             d_uf = d[: n_unfinished]  # shape: (uf, 1, K)
-            emit_and_transition = self.transition + emit_score[: n_unfinished, i].unsqueeze(dim=1)  # shape: (uf, K, K)
+            emit_and_transition = self.transition_ner + emit_score[: n_unfinished, i].unsqueeze(dim=1)  # shape: (uf, K, K)
             new_d_uf = d_uf.transpose(1, 2) + emit_and_transition  # shape: (uf, K, K)
             d_uf, max_idx = torch.max(new_d_uf, dim=1)
             max_idx = max_idx.tolist()  # list, shape: (nf, K)
@@ -129,7 +139,8 @@ class BiLSTMCRF(nn.Module):
     def save(self, filepath):
         params = {
             'sent_vocab': self.sent_vocab,
-            'tag_vocab': self.tag_vocab,
+            'tag_vocab_ner': self.tag_vocab_ner,
+            'tag_vocab_entity': self.tag_vocab_entity,
             'args': dict(dropout_rate=self.dropout_rate, embed_size=self.embed_size, hidden_size=self.hidden_size),
             'state_dict': self.state_dict()
         }
@@ -138,7 +149,7 @@ class BiLSTMCRF(nn.Module):
     @staticmethod
     def load(weights_matrix, filepath, device_to_load):
         params = torch.load(filepath, map_location=lambda storage, loc: storage)
-        model = BiLSTMCRF(weights_matrix, params['sent_vocab'], params['tag_vocab'], **params['args'])
+        model = BiLSTMCRF(weights_matrix, params['sent_vocab'], params['tag_vocab_ner'], params['tag_vocab_entity'], **params['args'])
         weights_matrix = torch.DoubleTensor(np.array(weights_matrix))
         params['state_dict']['embedding.weight'] = weights_matrix
         model.load_state_dict(params['state_dict'])

@@ -26,7 +26,7 @@ def read_corpus(filepath):
     return sentences, tags
 
 
-def generate_train_dev_dataset(filepath, sent_vocab, tag_vocab, train_proportion=0.8):
+def generate_train_dev_dataset(filepath, sent_vocab, tag_vocab_ner, tag_vocab_entity, train_proportion=0.8):
     """ Read corpus from given file path and split it into train and dev parts
     Args:
         filepath: file path
@@ -39,8 +39,9 @@ def generate_train_dev_dataset(filepath, sent_vocab, tag_vocab, train_proportion
     """
     sentences, tags = read_corpus(filepath)
     sentences = words2indices(sentences, sent_vocab)
-    tags = words2indices(tags, tag_vocab)
-    data = list(zip(sentences, tags))
+    tags_ner = words2indices(tags, tag_vocab_ner)
+    tags_entity = words2indices(entity_or_not(tags), tag_vocab_entity)
+    data = list(zip(sentences, tags_ner, tags_entity))
     random.shuffle(data)
     n_train = int(len(data) * train_proportion)
     train_data, dev_data = data[: n_train], data[n_train:]
@@ -63,8 +64,9 @@ def batch_iter(data, batch_size=32, shuffle=True):
         batch = [data[idx] for idx in indices[i * batch_size: (i + 1) * batch_size]]
         batch = sorted(batch, key=lambda x: len(x[0]), reverse=True)
         sentences = [x[0] for x in batch]
-        tags = [x[1] for x in batch]
-        yield sentences, tags
+        tags_ner = [x[1] for x in batch]
+        tags_entity = [x[2] for x in batch]
+        yield sentences, tags_ner, tags_entity
 
 
 def words2indices(origin, vocab):
@@ -119,6 +121,26 @@ def print_var(**kwargs):
     for k, v in kwargs.items():
         print(k, v)
 
+def entity_or_not(tags):
+    new_tags = []
+    for curr_set in tags:
+        temp_tags = []
+        for j, tag in enumerate(curr_set):
+            if tag == 'O':
+                temp_tags.append("O")
+            elif tag == '<START>':
+                temp_tags.append(tag)
+            elif tag == '<END>':
+                temp_tags.append(tag)
+            elif tag == '<PAD>':
+                temp_tags.append(tag)
+            elif tag == '-DOCSTART-':
+                temp_tags.append(tag)
+            else:
+                temp_tags.append("Y")
+                # raise Exception('Invalid format!')
+        new_tags.append(temp_tags)
+    return new_tags
 
 def main():
     sentences, tags = read_corpus('data/train.txt')
