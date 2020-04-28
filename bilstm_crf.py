@@ -36,7 +36,10 @@ class BiLSTMCRF(nn.Module):
         self.transition_ner = nn.Parameter(torch.randn(len(self.tag_vocab_ner), len(self.tag_vocab_ner)))  # shape: (K, K)
         self.transition_entity = nn.Parameter(torch.randn(len(self.tag_vocab_entity), len(self.tag_vocab_entity)))  # shape: (K, K)
 
-    def forward(self, sentences, tags_ner, tags_entity, sen_lengths):
+        self.entity_experts_layer = nn.ModuleList([nn.Linear(2*self.hidden_size, len(self.tag_vocab_ner)) for _ in range(len(self.tag_vocab_ner))])
+        self.moee_linear = nn.Linear(2*self.hidden_size, len(self.tag_vocab_ner))
+
+    def forward(self, sentences, tags_ner, tags_entity, sen_lengths, method):
         """
         Args:
             sentences (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
@@ -49,16 +52,48 @@ class BiLSTMCRF(nn.Module):
         mask = (sentences != self.sent_vocab[self.sent_vocab.PAD]).to(self.device)  # shape: (b, len)
         sentences = sentences.transpose(0, 1)  # shape: (len, b)
         sentences = self.embedding(sentences)  # shape: (len, b, e)
-
-        emit_score_ner = self.encode(sentences, sen_lengths, self.hidden2emit_score_ner)  # shape: (b, len, K)
-        loss_ner = self.cal_loss(tags_ner, mask, emit_score_ner, self.transition_ner)  # shape: (b,)
-
-        emit_score_entity = self.encode(sentences, sen_lengths, self.hidden2emit_score_entity)  # shape: (b, len, K)
-        loss_entity = self.cal_loss(tags_entity, mask, emit_score_entity, self.transition_entity)  # shape: (b,)
-        loss = loss_ner+loss_entity
+        # MTL
+        hidden_states = self.encode(sentences, sen_lengths)  # shape: (b, len, 2h)
+        if method == 'MTL':
+            # For NER
+            emit_score_ner = self.hidden2emit_score_ner(hidden_states)  # shape: (b, len, K)
+            emit_score_ner = self.dropout(emit_score_ner)  # shape: (b, len, K)
+            loss_ner = self.cal_loss(tags_ner, mask, emit_score_ner, self.transition_ner)  # shape: (b,)
+            # For Entity
+            emit_score_entity = self.hidden2emit_score_entity(hidden_states)  # shape: (b, len, K)
+            emit_score_entity = self.dropout(emit_score_entity)  # shape: (b, len, K)
+            loss_entity = self.cal_loss(tags_entity, mask, emit_score_entity, self.transition_entity)  # shape: (b,)
+            loss = loss_ner + loss_entity
+        elif method == 'MOEE':
+            # For MoEE
+            moee_output = self.MoEE(hidden_states)  # shape: (b,)
+            loss_moee = self.cal_loss(tags_ner, mask, moee_output, self.transition_ner)  # shape: (b,)
+            loss = loss_moee
+        elif method == "MTL_MOEE":
+            # For Entity
+            emit_score_entity = self.hidden2emit_score_entity(hidden_states)  # shape: (b, len, K)
+            emit_score_entity = self.dropout(emit_score_entity)  # shape: (b, len, K)
+            loss_entity = self.cal_loss(tags_entity, mask, emit_score_entity, self.transition_entity)  # shape: (b,)
+            # For MoEE
+            moee_output = self.MoEE(hidden_states)  # shape: (b,)
+            loss_moee = self.cal_loss(tags_ner, mask, moee_output, self.transition_ner)  # shape: (b,)
+            loss = loss_entity+loss_moee
+        elif method == "Mod1":
+            # For NER
+            emit_score_ner = self.hidden2emit_score_ner(hidden_states)  # shape: (b, len, K)
+            emit_score_ner = self.dropout(emit_score_ner)  # shape: (b, len, K)
+            loss_ner = self.cal_loss(tags_ner, mask, emit_score_ner, self.transition_ner)  # shape: (b,)
+            # For Entity
+            emit_score_entity = self.hidden2emit_score_entity(hidden_states)  # shape: (b, len, K)
+            emit_score_entity = self.dropout(emit_score_entity)  # shape: (b, len, K)
+            loss_entity = self.cal_loss(tags_entity, mask, emit_score_entity, self.transition_entity)  # shape: (b,)
+            # For MoEE
+            moee_output = self.MoEE(hidden_states)  # shape: (b,)
+            loss_moee = self.cal_loss(tags_ner, mask, moee_output, self.transition_ner)  # shape: (b,)
+            loss = loss_ner + loss_entity + loss_moee
         return loss
 
-    def encode(self, sentences, sent_lengths, hidden2emit_score):
+    def encode(self, sentences, sent_lengths):
         """ BiLSTM Encoder
         Args:
             sentences (tensor): sentences with word embeddings, shape (len, b, e)
@@ -69,9 +104,26 @@ class BiLSTMCRF(nn.Module):
         padded_sentences = pack_padded_sequence(sentences, sent_lengths)
         hidden_states, _ = self.encoder(padded_sentences)
         hidden_states, _ = pad_packed_sequence(hidden_states, batch_first=True)  # shape: (b, len, 2h)
-        emit_score = hidden2emit_score(hidden_states)  # shape: (b, len, K)
-        emit_score = self.dropout(emit_score)  # shape: (b, len, K)
-        return emit_score
+        # emit_score = hidden2emit_score(hidden_states)  # shape: (b, len, K)
+        # emit_score = self.dropout(emit_score)  # shape: (b, len, K)
+        return hidden_states
+
+    def MoEE(self, hidden_states):
+        """Mixture of Entity Experts"""
+        m = []
+        hidden_states = hidden_states.transpose(0, 1)
+        for h in hidden_states: #shape of h - (b, 2h)
+            expt = [self.dropout(l(h)) for l in self.entity_experts_layer]
+            expt = torch.stack(expt).transpose(0, 1)
+            alpha = nn.Softmax(self.dropout(self.moee_linear(h)))
+            # Old
+            # T = torch.bmm(expt.reshape(expt.shape[0], expt.shape[2], expt.shape[1]), alpha.dim.view(alpha.dim.shape[0], alpha.dim.shape[1], 1))[:, :, -1]
+            # New
+            T = torch.bmm(expt.reshape(expt.shape[0], expt.shape[1], expt.shape[2]), alpha.dim.view(alpha.dim.shape[0], alpha.dim.shape[1], 1))[:, :, -1]
+            m.append(T)
+        m = torch.stack(m)
+        m = m.transpose(0, 1)
+        return m
 
     def cal_loss(self, tags, mask, emit_score, transition):
         """ Calculate CRF loss
@@ -105,7 +157,7 @@ class BiLSTMCRF(nn.Module):
         loss = -llk  # shape: (b,)
         return loss
 
-    def predict(self, sentences, sen_lengths):
+    def predict(self, sentences, sen_lengths, method):
         """
         Args:
             sentences (tensor): sentences, shape (b, len). Lengths are in decreasing order, len is the length
@@ -118,7 +170,15 @@ class BiLSTMCRF(nn.Module):
         mask = (sentences != self.sent_vocab[self.sent_vocab.PAD])  # shape: (b, len)
         sentences = sentences.transpose(0, 1)  # shape: (len, b)
         sentences = self.embedding(sentences)  # shape: (len, b, e)
-        emit_score = self.encode(sentences, sen_lengths, self.hidden2emit_score_ner)  # shape: (b, len, K)
+        hidden_states = self.encode(sentences, sen_lengths)  # shape: (b, len, 2*h)
+        # For MOEE
+        if method == 'MOEE' or method == 'MTL_MOEE' or method == "Mod1":
+            emit_score = self.MoEE(hidden_states)  # shape: (b,)
+        # For everything
+        else:
+            emit_score = self.hidden2emit_score_ner(hidden_states)  # shape: (b, len, K)
+            emit_score = self.dropout(emit_score)  # shape: (b, len, K)
+
         tags = [[[i] for i in range(len(self.tag_vocab_ner))]] * batch_size  # list, shape: (b, K, 1)
         d = torch.unsqueeze(emit_score[:, 0], dim=1)  # shape: (b, 1, K)
         for i in range(1, sen_lengths[0]):

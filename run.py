@@ -1,7 +1,7 @@
 """
 Usage:
-    run.py train TRAIN SENT_VOCAB TAG_VOCAB_NER TAG_VOCAB_ENTITY [options]
-    run.py test TEST SENT_VOCAB TAG_VOCAB_NER TAG_VOCAB_ENTITY MODEL [options]
+    run.py train METHOD TRAIN SENT_VOCAB TAG_VOCAB_NER TAG_VOCAB_ENTITY [options]
+    run.py test METHOD TEST SENT_VOCAB TAG_VOCAB_NER TAG_VOCAB_ENTITY MODEL [options]
 
 Options:
     --dropout-rate=<float>              dropout rate [default: 0.5]
@@ -45,6 +45,7 @@ def train(args, weights_matrix):
     sent_vocab = Vocab.load(args['SENT_VOCAB'])
     tag_vocab_ner = Vocab.load(args['TAG_VOCAB_NER'])
     tag_vocab_entity = Vocab.load(args['TAG_VOCAB_ENTITY'])
+    method = args['METHOD']
     train_data, dev_data = utils.generate_train_dev_dataset(args['TRAIN'], sent_vocab, tag_vocab_ner, tag_vocab_entity)
     print('num of training examples: %d' % (len(train_data)))
     print('num of development examples: %d' % (len(dev_data)))
@@ -84,7 +85,7 @@ def train(args, weights_matrix):
 
             # back propagation
             optimizer.zero_grad()
-            batch_loss = model(sentences, tags_ner, tags_entity, sent_lengths)  # shape: (b,)
+            batch_loss = model(sentences, tags_ner, tags_entity, sent_lengths, method)  # shape: (b,)
             loss = batch_loss.mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(args['--clip_max_norm']))
@@ -111,7 +112,7 @@ def train(args, weights_matrix):
                        cum_loss_sum / cum_batch_size, time.time() - cum_start))
                 cum_loss_sum, cum_batch_size, cum_tgt_word_sum = 0, 0, 0
 
-                dev_loss = cal_dev_loss(model, dev_data, 64, sent_vocab, tag_vocab_ner, tag_vocab_entity, device)
+                dev_loss = cal_dev_loss(model, dev_data, 64, sent_vocab, tag_vocab_ner, tag_vocab_entity, device, method)
                 if dev_loss < min_dev_loss * float(args['--patience-threshold']):
                     min_dev_loss = dev_loss
                     model.save(model_save_path)
@@ -156,6 +157,9 @@ def test(args, weights_matrix):
     sentences, tags = utils.read_corpus(args['TEST'])
     sentences = utils.words2indices(sentences, sent_vocab)
 
+    # Method
+    method = args['METHOD']
+
     # # Convert to binary tags (if there is a tag or not)
     tags_entity = utils.entity_or_not(tags)
 
@@ -179,7 +183,7 @@ def test(args, weights_matrix):
     with torch.no_grad():
         for sentences, tags, tags_entity in utils.batch_iter(test_data, batch_size=int(args['--batch-size']), shuffle=False):
             sentences, sent_lengths = utils.pad(sentences, sent_vocab[sent_vocab.PAD], device)
-            predicted_tags = model.predict(sentences, sent_lengths)
+            predicted_tags = model.predict(sentences, sent_lengths, method)
             n_iter += 1
             num_words += sum(sent_lengths)
             for tag, predicted_tag in zip(tags, predicted_tags):
@@ -200,7 +204,7 @@ def test(args, weights_matrix):
     print('Precision: %f, Recall: %f, F1 score: %f' % (precision, recall, f1_score))
 
 
-def cal_dev_loss(model, dev_data, batch_size, sent_vocab, tag_vocab_ner, tag_vocab_entity, device):
+def cal_dev_loss(model, dev_data, batch_size, sent_vocab, tag_vocab_ner, tag_vocab_entity, device, method):
     """ Calculate loss on the development data
     Args:
         model: the model being trained
@@ -220,7 +224,7 @@ def cal_dev_loss(model, dev_data, batch_size, sent_vocab, tag_vocab_ner, tag_voc
             sentences, sent_lengths = utils.pad(sentences, sent_vocab[sent_vocab.PAD], device)
             tags_ner, _ = utils.pad(tags_ner, tag_vocab_ner[sent_vocab.PAD], device)
             tags_entity, _ = utils.pad(tags_entity, tag_vocab_entity[sent_vocab.PAD], device)
-            batch_loss = model(sentences, tags_ner, tags_entity, sent_lengths)  # shape: (b,)
+            batch_loss = model(sentences, tags_ner, tags_entity, sent_lengths, method)  # shape: (b,)
             loss += batch_loss.sum().item()
             n_sentences += len(sentences)
     model.train(is_training)
