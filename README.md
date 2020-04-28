@@ -1,12 +1,12 @@
-#Zero Resource Cross-Domain Named Entity Recognition
+# Zero Resource Cross-Domain Named Entity Recognition
 
 This is a Pytorch implementation of BiLSTM-CRF+MTL+MoEE for Cross Domain Named Entity Recognition, which is described in https://arxiv.org/pdf/2002.05923.pdf.
 
-###Data
+### Data
 
 The corpus is found in the data folder. The model uses CoNLL 2003 data for training and validation. The test data is the CBS SciTech News Dataset taken from https://github.com/jiachenwestlake/Cross-Domain_NER. 
 
-Steps to train the model and test it.
+### How to run the code
 
 ```python
 
@@ -26,7 +26,7 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 
 ```
 
-###Reference
+### Reference
 
 1. https://github.com/Gxzzz/BiLSTM-CRF
 2. https://github.com/jiachenwestlake/Cross-Domain_NER
