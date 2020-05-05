@@ -54,7 +54,11 @@ class BiLSTMCRF(nn.Module):
         sentences = self.embedding(sentences)  # shape: (len, b, e)
         # MTL
         hidden_states = self.encode(sentences, sen_lengths)  # shape: (b, len, 2h)
-        if method == 'MTL':
+        if method == 'Baseline':
+            emit_score_ner = self.hidden2emit_score_ner(hidden_states)  # shape: (b, len, K)
+            emit_score_ner = self.dropout(emit_score_ner)  # shape: (b, len, K)
+            loss = self.cal_loss(tags_ner, mask, emit_score_ner, self.transition_ner)  # shape: (b,)
+        elif method == 'MTL':
             # For NER
             emit_score_ner = self.hidden2emit_score_ner(hidden_states)  # shape: (b, len, K)
             emit_score_ner = self.dropout(emit_score_ner)  # shape: (b, len, K)

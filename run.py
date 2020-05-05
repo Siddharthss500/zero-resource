@@ -341,8 +341,8 @@ def create_vocab(unique_tags_ner, unique_tags_entity, unique_words):
 
 def pretrained(target_vocab, emb_dim=300):
     # Load pre-trained model
-    # model = fasttext.load_model('./data/Pre-trained embeddings/crawl-300d-2M-subword.bin')
-    model = fasttext.load_model('./data/my_model.bin')
+    model = fasttext.load_model('./data/Pre-trained embeddings/crawl-300d-2M-subword.bin')
+    # model = fasttext.load_model('./data/my_model.bin')
     print("Done loading the pre-trained model.")
 
     matrix_len = len(target_vocab)
