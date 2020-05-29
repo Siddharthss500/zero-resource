@@ -26,9 +26,9 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 
 ```
 
-###Results
+### Results
 
-| | Author's Results | Our Results |
+| | Author's Results || Our Results ||||
 | Model 					   | FastText-Pretrained | | FastText-Fine tuned | | FastText-Pretrained | |
 | | unfreeze | freeze | unfreeze | freeze | unfreeze | freeze |
 | ------------- |:------------:| -----:|----: | ------------- |:------------:| -----:|
@@ -41,10 +41,10 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 | Mod2 						   | -     | -     | 45.66 | 61.91 | 65.33 | 69.36 |		
 
 
-###Contributors
+### Contributors
 
 1. [Siddharth Sundararajan](https://github.com/Siddharthss500)
-2. [Nitin Karolla Reddy] (https://github.com/nitinkarolla)
+2. [Nitin Karolla Reddy](https://github.com/nitinkarolla)
 
 ### Reference
 
