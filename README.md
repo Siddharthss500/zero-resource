@@ -76,7 +76,7 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 	</tr>
 	<tr>
 		<td>BiLSTM-CRF w/ MoEE</td>
-		<td>65.24</td>
+		<th>65.24</th>
 		<td>69.25</td>
 		<td>62.3</td>
 		<td>63.19</td>
@@ -86,7 +86,7 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 	<tr>
 		<td>BiLSTM-CRF w/ MTL and MoEE</td>
 		<td>64.88</td>
-		<td>70.04</td>
+		<th>70.04</th>
 		<td>49.98</td>
 		<td>65.38</td>
 		<td>67.24</td>
@@ -98,8 +98,8 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 		<td>-</td>
 		<td>66.27</td>
 		<td>65.57</td>
-		<td>68.31</td>
-		<td>70.37</td>
+		<th>68.31</th>
+		<th>70.37</th>
 	</tr>
 	<tr>
 		<td>Mod2</td>
@@ -108,7 +108,7 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 		<td>45.66</td>
 		<td>61.91</td>
 		<td>65.33</td>
-		<td>69.36</td>
+		<th>69.36</th>
 	</tr>
 </table>
 
@@ -118,7 +118,7 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 ### Contributors
 
 1. [Siddharth Sundararajan](https://github.com/Siddharthss500)
-2. [Nitin Karolla Reddy](https://github.com/nitinkarolla)
+2. [Nitin Reddy Karolla](https://github.com/nitinkarolla)
 
 ### Reference
 
