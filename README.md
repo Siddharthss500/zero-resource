@@ -28,17 +28,91 @@ python run.py test MTL ./data/tech_test.txt ./vocab/sent_vocab.json ./vocab/tag_
 
 ### Results
 
-| | Author's Results || Our Results ||||
-| Model 					   | FastText-Pretrained | | FastText-Fine tuned | | FastText-Pretrained | |
-| | unfreeze | freeze | unfreeze | freeze | unfreeze | freeze |
-| ------------- |:------------:| -----:|----: | ------------- |:------------:| -----:|
-| BiLSTM-CRF 	 			   | 63.18 | 67.89 | 63.38 | 67.64 | 64.41 | 67.56 |
-| BiLSTM-CRF w/ MTL            | 64.62 | 69.58 | 66.5  | 64.7  | 68.84 | 68.89 |
-| BiLSTM-CRF w/ MTL (Separate) | - 	   | - 	   | 66.3  | 66.1  | 68.84 | 68.89 |
-| BiLSTM-CRF w/ MoEE 		   | 65.24 | 69.25 | 62.3  | 63.19 | 68.7  | 67.94 |
-| BiLSTM-CRF w/ MTL and MoEE   | 64.88 | 70.04 | 49.98 | 65.48 | 67.24 | 68.33 |
-| Mod1 						   | - 	   | -     | 66.27 | 65.57 | 68.31 | 70.37 |
-| Mod2 						   | -     | -     | 45.66 | 61.91 | 65.33 | 69.36 |		
+<table> 
+	<tr> 
+		<th rowspan="3">Model</th>
+		<th colspan="2">Author's Results</th> 
+		<th colspan="4">Our Results</th> 
+	</tr> 
+	<tr> 
+		<th colspan="2">FastText-Pretrained</th>
+		<th colspan="2">FastText-Fine tuned</th>
+		<th colspan="2">FastText-Pretrained</th>
+	</tr> 
+	<tr>
+		<th>unfreeze</th>
+		<th>freeze</th>
+		<th>unfreeze</th>
+		<th>freeze</th>
+		<th>unfreeze</th>
+		<th>freeze</th>
+	</tr>
+	<tr>
+		<td>BiLSTM-CRF</td>
+		<td>63.18</td>
+		<td>67.89</td>
+		<td>63.38</td>
+		<td>67.64</td>
+		<td>64.41</td>
+		<td>67.56</td>
+	</tr>
+	<tr>
+		<td>BiLSTM-CRF w/ MTL</td>
+		<td>64.62</td>
+		<td>69.58</td>
+		<td>66.5</td>
+		<td>64.7</td>
+		<td>68.84</td>
+		<td>68.89</td>
+	</tr>
+	<tr>
+		<td>BiLSTM-CRF w/ MTL (Separate)</td>
+		<td>-</td>
+		<td>-</td>
+		<td>66.3</td>
+		<td>66.1</td>
+		<td>68.84</td>
+		<td>68.89</td>
+	</tr>
+	<tr>
+		<td>BiLSTM-CRF w/ MoEE</td>
+		<td>65.24</td>
+		<td>69.25</td>
+		<td>62.3</td>
+		<td>63.19</td>
+		<td>68.7</td>
+		<td>67.94</td>
+	</tr>
+	<tr>
+		<td>BiLSTM-CRF w/ MTL and MoEE</td>
+		<td>64.88</td>
+		<td>70.04</td>
+		<td>49.98</td>
+		<td>65.38</td>
+		<td>67.24</td>
+		<td>68.33</td>
+	</tr>
+	<tr>
+		<td>Mod1</td>
+		<td>-</td>
+		<td>-</td>
+		<td>66.27</td>
+		<td>65.57</td>
+		<td>68.31</td>
+		<td>70.37</td>
+	</tr>
+	<tr>
+		<td>Mod2</td>
+		<td>-</td>
+		<td>-</td>
+		<td>45.66</td>
+		<td>61.91</td>
+		<td>65.33</td>
+		<td>69.36</td>
+	</tr>
+</table>
+
+		
 
 
 ### Contributors
